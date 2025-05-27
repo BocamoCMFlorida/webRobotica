@@ -18,15 +18,18 @@ export default function RegisterScreen({ navigation }) {
     }
 
     try {
-      const response = await fetch('http://localhost:8000', {
+      const formData = new URLSearchParams();
+      formData.append('email', email.trim());
+      formData.append('username', username.trim());
+      formData.append('password', password);
+      formData.append('is_admin', 'false');
+
+      const response = await fetch('http://localhost:8000/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          username,
-          password,
-          is_admin: false  // asumiendo que no registras admins desde esta pantalla
-        }),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString(),
       });
 
       if (!response.ok) {
@@ -35,8 +38,12 @@ export default function RegisterScreen({ navigation }) {
         return;
       }
 
-      Alert.alert('Registro exitoso', `Usuario registrado: ${email}`);
-      navigation.navigate('Login');
+      Alert.alert('Registro exitoso', `Usuario registrado: ${email}`, [
+        {
+          text: 'OK',
+          onPress: () => navigation.navigate('Login'),
+        },
+      ]);
     } catch (error) {
       Alert.alert('Error', 'No se pudo conectar con el servidor');
       console.error(error);
@@ -86,6 +93,12 @@ export default function RegisterScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: 20 },
   title: { fontSize: 24, marginBottom: 20, textAlign: 'center' },
-  input: { borderWidth: 1, borderColor: '#ccc', padding: 10, marginBottom: 15, borderRadius: 5 },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    padding: 10,
+    marginBottom: 15,
+    borderRadius: 5,
+  },
   link: { marginTop: 15, color: 'blue', textAlign: 'center' },
 });

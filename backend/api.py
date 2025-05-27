@@ -1,20 +1,3 @@
-  # Agrega esta línea al inicio de tu archivo api.pyfrom fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
-from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
-from typing import List, Optional
-import os
-import shutil
-import uuid
-from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +7,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext  # ✅ Importación necesaria
+from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -44,10 +27,9 @@ SECRET_KEY = "tu_clave_secreta_super_segura_aqui"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# ✅ ESTAS LÍNEAS SON CRÍTICAS
+# Contexto de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
-
 
 # Configuración de archivos
 UPLOAD_DIR = "uploads"
@@ -74,7 +56,7 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     description = Column(Text)
-    image_path = Column(String)  # Ruta de la imagen del robot
+    image_path = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime, nullable=True)
     creator_id = Column(Integer, ForeignKey("users.id"))
@@ -234,21 +216,25 @@ app.add_middleware(
 )
 
 # Endpoints de autenticación
+
 @app.post("/register", response_model=UserResponse)
 def register_user(
-    email: EmailStr = Form(...),
+    email: str = Form(...),
     username: str = Form(...),
     password: str = Form(...),
     is_admin: bool = Form(False),
     db: Session = Depends(get_db)
 ):
-    if db.query(models.User).filter(models.User.email == email).first():
+    # Verificar si el email ya existe
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-    if db.query(models.User).filter(models.User.username == username).first():
+
+    # Verificar si el username ya existe
+    if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
 
     hashed_password = get_password_hash(password)
-    db_user = models.User(
+    db_user = User(
         email=email,
         username=username,
         hashed_password=hashed_password,
@@ -317,7 +303,7 @@ def create_task(
     db_task = Task(
         title=title,
         description=description,
-        image_path=f"/uploads/{file_name}",  # URL relativa para el frontend
+        image_path=f"/uploads/{file_name}",
         due_date=due_date_obj,
         creator_id=current_user.id
     )
@@ -564,6 +550,6 @@ def create_default_admin():
     finally:
         db.close()
 
-if __name__ == "__api__":
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
