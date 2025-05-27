@@ -15,6 +15,23 @@ import os
 import shutil
 import uuid
 from pathlib import Path
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, relationship
+from pydantic import BaseModel, EmailStr
+from passlib.context import CryptContext  # ✅ Importación necesaria
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from typing import List, Optional
+import os
+import shutil
+import uuid
+from pathlib import Path
 
 # Configuración de la base de datos
 SQLALCHEMY_DATABASE_URL = "sqlite:///./tasks_app.db"
@@ -27,8 +44,10 @@ SECRET_KEY = "tu_clave_secreta_super_segura_aqui"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
+# ✅ ESTAS LÍNEAS SON CRÍTICAS
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
+
 
 # Configuración de archivos
 UPLOAD_DIR = "uploads"
@@ -216,20 +235,25 @@ app.add_middleware(
 
 # Endpoints de autenticación
 @app.post("/register", response_model=UserResponse)
-def register_user(user: UserCreate, db: Session = Depends(get_db)):
-    # Verificar si el usuario ya existe
-    if db.query(User).filter(User.email == user.email).first():
+def register_user(
+    email: EmailStr = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    is_admin: bool = Form(False),
+    db: Session = Depends(get_db)
+):
+    if db.query(models.User).filter(models.User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-    if db.query(User).filter(User.username == user.username).first():
+    if db.query(models.User).filter(models.User.username == username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
-    
-    # Crear nuevo usuario
-    hashed_password = get_password_hash(user.password)
-    db_user = User(
-        email=user.email,
-        username=user.username,
+
+    hashed_password = get_password_hash(password)
+    db_user = models.User(
+        email=email,
+        username=username,
         hashed_password=hashed_password,
-        is_admin=user.is_admin
+        is_admin=is_admin,
+        created_at=datetime.utcnow()
     )
     db.add(db_user)
     db.commit()
@@ -540,6 +564,6 @@ def create_default_admin():
     finally:
         db.close()
 
-if __name__ == "__main__":
+if __name__ == "__api__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
