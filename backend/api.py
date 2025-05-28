@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +102,7 @@ app.add_middleware(
 create_tables()
 
 # Endpoints de autenticación
+
 @app.post("/register", response_model=UserResponse)
 def register_user(
     email: str = Form(...),
@@ -296,7 +298,33 @@ def mark_task_complete(
     
     db.commit()
     return {"message": "Task marked as completed"}
+@app.post("/logout")
+def logout_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Endpoint para cerrar sesión invalidando el token JWT
+    """
+    token = credentials.credentials
 
+    try:
+        # Decodificar el token para verificar que es válido antes de invalidarlo
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+        blacklisted_tokens.add(token)
+
+        exp_timestamp = payload.get("exp")
+        if exp_timestamp:
+             ttl = exp_timestamp - int(datetime.utcnow().timestamp())
+             if ttl > 0:
+                 redisclient.setex(f"blacklist{token}", ttl, "revoked")
+
+        return {"message": "Successfully logged out"}
+
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 @app.put("/tasks/{task_id}/uncomplete")
 def mark_task_incomplete(
     task_id: int,
