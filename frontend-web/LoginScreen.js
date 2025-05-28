@@ -34,8 +34,6 @@ const LoginScreen = ({ navigation, setToken, setRole, setIsAuthenticated }) => {
     setLoading(true);
 
     try {
-      console.log('Iniciando proceso de login...');
-      
       const formData = new URLSearchParams();
       formData.append('username', username.trim());
       formData.append('password', password);
@@ -49,53 +47,38 @@ const LoginScreen = ({ navigation, setToken, setRole, setIsAuthenticated }) => {
       });
 
       const data = await response.json();
-      console.log('Respuesta del servidor:', data);
 
       if (response.ok) {
         const { access_token } = data;
-        console.log('Token recibido:', access_token ? 'Sí' : 'No');
-        
-        // Guardar token
         await AsyncStorage.setItem('access_token', access_token);
 
-        // Obtener información del usuario
         const userInfo = await getUserInfo(access_token);
-        console.log('Información del usuario:', userInfo);
-        
+
         if (userInfo) {
-          // Guardar información del usuario
           await AsyncStorage.setItem('user_info', JSON.stringify(userInfo));
 
-          // Determinar rol
           const userRole = userInfo.is_admin ? 'admin' : 'student';
-          console.log('Rol del usuario:', userRole);
-          
-          // Guardar rol
           await AsyncStorage.setItem('user_role', userRole);
 
-          // Actualizar estados - esto activará la navegación automática
-          console.log('Actualizando estados...');
+          // Guardar estados globales
           setToken(access_token);
           setRole(userRole);
           setIsAuthenticated(true);
 
-          // Mostrar mensaje de éxito
-          console.log('Login exitoso, navegación automática activada');
-          Alert.alert('Éxito', `¡Bienvenido ${userInfo.username}!`);
+          // Navegar según el rol
+          if (userRole === 'admin') {
+            navigation.replace('AdminDashboard');
+          } else {
+            navigation.replace('StudentDashboard');
+          }
         } else {
-          console.error('No se pudo obtener información del usuario');
           Alert.alert('Error', 'No se pudo obtener la información del usuario');
         }
       } else {
-        console.error('Error en login:', data);
         Alert.alert('Error de autenticación', data.detail || 'Usuario o contraseña incorrectos');
       }
     } catch (error) {
-      console.error('Error en login:', error);
-      Alert.alert(
-        'Error de conexión',
-        'No se pudo conectar con el servidor. Verifica tu conexión a internet.'
-      );
+      Alert.alert('Error de conexión', 'No se pudo conectar con el servidor.');
     } finally {
       setLoading(false);
     }
@@ -103,8 +86,6 @@ const LoginScreen = ({ navigation, setToken, setRole, setIsAuthenticated }) => {
 
   const getUserInfo = async (token) => {
     try {
-      console.log('Obteniendo información del usuario...');
-      
       const response = await fetch(`${API_BASE_URL}/me`, {
         method: 'GET',
         headers: {
@@ -113,20 +94,12 @@ const LoginScreen = ({ navigation, setToken, setRole, setIsAuthenticated }) => {
         },
       });
 
-      console.log('Status de /me:', response.status);
-
       if (response.ok) {
-        const userInfo = await response.json();
-        console.log('Información del usuario obtenida exitosamente');
-        return userInfo;
+        return await response.json();
       } else {
-        console.error('Error al obtener info del usuario, status:', response.status);
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
         return null;
       }
     } catch (error) {
-      console.error('Error obteniendo información del usuario:', error);
       return null;
     }
   };

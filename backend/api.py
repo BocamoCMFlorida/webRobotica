@@ -3,10 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
-from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -16,148 +13,29 @@ import shutil
 import uuid
 from pathlib import Path
 
-# Configuración de la base de datos
-SQLALCHEMY_DATABASE_URL = "sqlite:///./tasks_app.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+
+# Importaciones locales
+from database import get_db, create_tables, SessionLocal
+from models import User, Task, TaskSubmission
+from schemas import (
+    UserCreate, UserResponse, TaskCreate, TaskResponse, 
+    TaskSubmissionResponse, TaskWithSubmissions, Token, TokenData
+)
 
 # Configuración de seguridad
-SECRET_KEY = "tu_clave_secreta_super_segura_aqui"
+SECRET_KEY = os.getenv("SECRET_KEY", "rootpasswor")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1"))
 
 # Contexto de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 # Configuración de archivos
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
-# Modelos de base de datos
-class User(Base):
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
-    username = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relaciones
-    created_tasks = relationship("Task", back_populates="creator")
-    task_submissions = relationship("TaskSubmission", back_populates="student")
-
-class Task(Base):
-    __tablename__ = "tasks"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(Text)
-    image_path = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    due_date = Column(DateTime, nullable=True)
-    creator_id = Column(Integer, ForeignKey("users.id"))
-    
-    # Relaciones
-    creator = relationship("User", back_populates="created_tasks")
-    submissions = relationship("TaskSubmission", back_populates="task")
-
-class TaskSubmission(Base):
-    __tablename__ = "task_submissions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"))
-    student_id = Column(Integer, ForeignKey("users.id"))
-    completed = Column(Boolean, default=False)
-    completed_at = Column(DateTime, nullable=True)
-    notes = Column(Text, nullable=True)
-    
-    # Relaciones
-    task = relationship("Task", back_populates="submissions")
-    student = relationship("User", back_populates="task_submissions")
-
-# Crear tablas
-Base.metadata.create_all(bind=engine)
-
-# Modelos Pydantic
-class UserCreate(BaseModel):
-    email: EmailStr
-    username: str
-    password: str
-    is_admin: bool = False
-
-class UserResponse(BaseModel):
-    id: int
-    email: str
-    username: str
-    is_admin: bool
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-class TaskCreate(BaseModel):
-    title: str
-    description: str
-    due_date: Optional[datetime] = None
-
-class TaskResponse(BaseModel):
-    id: int
-    title: str
-    description: str
-    image_path: Optional[str]
-    created_at: datetime
-    due_date: Optional[datetime]
-    creator: UserResponse
-    
-    class Config:
-        from_attributes = True
-
-class TaskSubmissionResponse(BaseModel):
-    id: int
-    task_id: int
-    student: UserResponse
-    completed: bool
-    completed_at: Optional[datetime]
-    notes: Optional[str]
-    
-    class Config:
-        from_attributes = True
-
-class TaskWithSubmissions(BaseModel):
-    id: int
-    title: str
-    description: str
-    image_path: Optional[str]
-    created_at: datetime
-    due_date: Optional[datetime]
-    total_students: int
-    completed_count: int
-    pending_count: int
-    completion_rate: float
-    submissions: List[TaskSubmissionResponse]
-    
-    class Config:
-        from_attributes = True
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
 # Funciones de utilidad
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -204,7 +82,11 @@ def get_admin_user(current_user: User = Depends(get_current_user)):
     return current_user
 
 # Inicializar FastAPI
-app = FastAPI(title="Sistema de Tareas Educativas", version="1.0.0")
+app = FastAPI(
+    title="Sistema de Tareas Educativas", 
+    version="1.0.0",
+    description="API para gestión de tareas educativas con MySQL"
+)
 
 # Configurar CORS
 app.add_middleware(
@@ -215,8 +97,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Endpoints de autenticación
+# Crear tablas al iniciar
+create_tables()
 
+# Endpoints de autenticación
 @app.post("/register", response_model=UserResponse)
 def register_user(
     email: str = Form(...),
@@ -519,6 +403,7 @@ def root():
     return {
         "message": "API del Sistema de Tareas Educativas",
         "version": "1.0.0",
+        "database": "MySQL",
         "endpoints": {
             "docs": "/docs",
             "redoc": "/redoc",
@@ -550,6 +435,6 @@ def create_default_admin():
     finally:
         db.close()
 
-if __name__ == "__main__":
+if __name__ == "__api__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
