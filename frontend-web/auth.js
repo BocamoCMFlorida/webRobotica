@@ -1,75 +1,81 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Función para hacer login y guardar token y role en AsyncStorage
-export async function login(username, password) {
-  const formData = new FormData();
-  formData.append('username', username);
-  formData.append('password', password);
+const API_URL = 'http://localhost:8000';
 
-  const response = await fetch('http://localhost:8000/login', {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.detail || 'Login failed');
-  }
-
-  const data = await response.json();
-
-  // Guardar token y rol en AsyncStorage
-  await AsyncStorage.setItem('access_token', data.access_token);
-  await AsyncStorage.setItem('user_role', data.role); // Asumo que la API devuelve el role
-
-  return data;
-}
-
-// Función para registrar usuario
-export async function register(username, password, email) {
-  const formData = new FormData();
-  formData.append('username', username);
-  formData.append('password', password);
-  formData.append('email', email);
-
-  const response = await fetch('http://localhost:8000/register', {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.detail || 'Registration failed');
-  }
-
-  const data = await response.json();
-  return data;
-}
-
-// Función para cerrar sesión: llama al endpoint logout y limpia almacenamiento local
-export async function logout() {
+export const login = async (username, password) => {
   try {
-    const token = await AsyncStorage.getItem('access_token');
-    if (!token) {
-      throw new Error('No token found');
-    }
-
-    const response = await fetch('http://localhost:8000/logout', {
+    console.log('Attempting login for:', username);
+    
+    const response = await fetch(`${API_URL}/login`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
+      body: new URLSearchParams({
+        username: username,
+        password: password
+      })
     });
 
+    console.log('Login response status:', response.status);
+
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || 'Logout failed');
+      const errorData = await response.json();
+      console.log('Login error:', errorData);
+      throw new Error(errorData.detail || 'Error de autenticación');
     }
 
-    // Eliminar token y otros datos locales
-    await AsyncStorage.multiRemove(['access_token', 'user_role', 'user_info']);
+    const userData = await response.json();
+    console.log('Login successful, user data:', userData);
+
+    // Determinar el rol correctamente
+    let userRole = 'student';
+    if (userData.is_admin === true || userData.is_admin === 'true' || userData.role === 'admin') {
+      userRole = 'admin';
+    }
+    const userName = userData.username || username;
+
+    // Guardar solo rol y username
+    await AsyncStorage.setItem('user_role', userRole);
+    await AsyncStorage.setItem('username', userName);
+
+    console.log('User role and username saved:', userRole, userName);
+
+    return {
+      username: userName,
+      role: userRole
+    };
+
   } catch (error) {
-    console.error('Error al cerrar sesión:', error);
+    console.error('Login error:', error);
     throw error;
   }
-}
+};
+
+export const logout = async () => {
+  try {
+    await AsyncStorage.multiRemove(['user_role', 'username']);
+    console.log('Logout successful - user data removed');
+  } catch (error) {
+    console.error('Logout error:', error);
+    throw error;
+  }
+};
+
+export const getStoredAuth = async () => {
+  try {
+    const role = await AsyncStorage.getItem('user_role');
+    const username = await AsyncStorage.getItem('username');
+    
+    return {
+      role,
+      username
+    };
+  } catch (error) {
+    console.error('Error getting stored auth:', error);
+    return {
+      role: null,
+      username: null
+    };
+  }
+};

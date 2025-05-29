@@ -1,92 +1,43 @@
-
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, HTTPException, status, File, UploadFile, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional
 import os
 import shutil
 import uuid
 from pathlib import Path
-
+from fastapi import Response
 
 # Importaciones locales
-from database import get_db, create_tables, SessionLocal
-from models import User, Task, TaskSubmission
+from database import get_db, SessionLocal
+from models import User, Task, TaskCompletion
 from schemas import (
     UserCreate, UserResponse, TaskCreate, TaskResponse, 
-    TaskSubmissionResponse, TaskWithSubmissions, Token, TokenData
+    TaskCompletionResponse, TaskWithCompletions
 )
 
-# Configuración de seguridad
-SECRET_KEY = os.getenv("SECRET_KEY", "rootpasswor")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1"))
-
-# Contexto de contraseñas
+# Contexto de contraseñas (aún necesario para registro)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
 
 # Configuración de archivos
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
 # Funciones de utilidad
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        token = credentials.credentials
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    
-    user = db.query(User).filter(User.username == token_data.username).first()
-    if user is None:
-        raise credentials_exception
-    return user
-
-def get_admin_user(current_user: User = Depends(get_current_user)):
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions"
-        )
-    return current_user
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
 
 # Inicializar FastAPI
 app = FastAPI(
     title="Sistema de Tareas Educativas", 
     version="1.0.0",
-    description="API para gestión de tareas educativas con MySQL"
+    description="API para gestión de tareas educativas con MySQL (Sin Autenticación)"
 )
 
 # Configurar CORS
@@ -98,11 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Crear tablas al iniciar
-create_tables()
-
-# Endpoints de autenticación
-
+# Endpoints de usuarios
 @app.post("/register", response_model=UserResponse)
 def register_user(
     email: str = Form(...),
@@ -132,51 +79,81 @@ def register_user(
     db.refresh(db_user)
     return db_user
 
-@app.post("/login", response_model=Token)
-def login_user(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+@app.post("/logout")
+def logout(response: Response):
+    # Borrar cookie de sesión (si existiera)
+    response.delete_cookie(key="session")
+    return {"message": "Sesión cerrada, por favor inicia sesión nuevamente"}
+
+@app.post("/login")
+def login_user(
+    username: str = Form(...), 
+    password: str = Form(...), 
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint de login simplificado - solo verifica credenciales
+    """
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Incorrect username or password"
         )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+  
+    return {
+        "message": "Login successful",
+        "user_id": user.id,
+        "username": user.username,
+        "is_admin": user.is_admin
+    }
 
-@app.get("/me", response_model=UserResponse)
-def read_users_me(current_user: User = Depends(get_current_user)):
-    return current_user
+@app.get("/users/{user_id}", response_model=UserResponse)
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
-# Endpoints de tareas (solo administradores)
+@app.get("/users", response_model=List[UserResponse])
+def get_all_users(db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    return users
+
+# Endpoints de tareas
 @app.post("/tasks", response_model=TaskResponse)
 def create_task(
     title: str = Form(...),
     description: str = Form(...),
     due_date: Optional[str] = Form(None),
     image: UploadFile = File(...),
-    current_user: User = Depends(get_admin_user),
+    creator_id: int = Form(...),  # Ahora se pasa el ID del creador directamente
     db: Session = Depends(get_db)
 ):
+    # Verificar que el creador existe y es admin
+    creator = db.query(User).filter(User.id == creator_id).first()
+    if not creator:
+        raise HTTPException(status_code=404, detail="Creator user not found")
+  
+    if not creator.is_admin:
+        raise HTTPException(status_code=403, detail="Only admins can create tasks")
+
     # Validar tipo de archivo
     allowed_types = ["image/jpeg", "image/png", "image/jpg"]
     if image.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only JPEG and PNG images are allowed")
-    
+
     # Guardar imagen con nombre único
     file_extension = image.filename.split(".")[-1] if image.filename else "jpg"
     file_name = f"task_{uuid.uuid4().hex}.{file_extension}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
-    
+
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error saving image")
-    
+
     # Convertir fecha si se proporciona
     due_date_obj = None
     if due_date:
@@ -184,207 +161,172 @@ def create_task(
             due_date_obj = datetime.fromisoformat(due_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format")
-    
+
     # Crear tarea
     db_task = Task(
         title=title,
         description=description,
         image_path=f"/uploads/{file_name}",
         due_date=due_date_obj,
-        creator_id=current_user.id
+        creator_id=creator_id
     )
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
-    
-    # Crear submissions para todos los estudiantes
+
+    # Crear TaskCompletion para todos los estudiantes
     students = db.query(User).filter(User.is_admin == False).all()
     for student in students:
-        submission = TaskSubmission(
+        task_completion = TaskCompletion(
             task_id=db_task.id,
-            student_id=student.id
+            student_id=student.id,
+            completed=False,
+            created_at=datetime.utcnow()
         )
-        db.add(submission)
-    
+        db.add(task_completion)
+  
     db.commit()
     return db_task
 
 @app.get("/tasks", response_model=List[TaskResponse])
-def get_all_tasks(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+def get_all_tasks(db: Session = Depends(get_db)):
     tasks = db.query(Task).all()
     return tasks
 
-@app.get("/tasks/{task_id}", response_model=TaskWithSubmissions)
-def get_task_details(
-    task_id: int,
-    current_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
+@app.get("/tasks/{task_id}", response_model=TaskWithCompletions)
+def get_task_details(task_id: int, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
-    submissions = db.query(TaskSubmission).filter(TaskSubmission.task_id == task_id).all()
-    total_students = len(submissions)
-    completed_count = len([s for s in submissions if s.completed])
-    pending_count = total_students - completed_count
-    completion_rate = (completed_count / total_students * 100) if total_students > 0 else 0
-    
-    return TaskWithSubmissions(
+
+    completions = db.query(TaskCompletion).filter(TaskCompletion.task_id == task_id).all()
+    total_completions = len(completions)
+    completed_count = len([c for c in completions if c.completed])
+    pending_count = total_completions - completed_count
+    completion_rate = (completed_count / total_completions * 100) if total_completions > 0 else 0
+
+    return TaskWithCompletions(
         id=task.id,
         title=task.title,
         description=task.description,
         image_path=task.image_path,
         created_at=task.created_at,
         due_date=task.due_date,
-        total_students=total_students,
+        total_students=total_completions,
         completed_count=completed_count,
         pending_count=pending_count,
         completion_rate=round(completion_rate, 2),
-        submissions=submissions
+        completions=completions
     )
 
-# Endpoints para estudiantes
-@app.get("/my-tasks")
-def get_my_tasks(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user.is_admin:
+@app.get("/users/{user_id}/tasks", response_model=List[TaskCompletionResponse])
+def get_user_tasks(user_id: int, db: Session = Depends(get_db)):
+    """
+    Obtener las tareas asignadas a un usuario específico
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+  
+    if user.is_admin:
         raise HTTPException(status_code=403, detail="Admins cannot have assigned tasks")
-    
-    submissions = db.query(TaskSubmission).filter(
-        TaskSubmission.student_id == current_user.id
+
+    completions = db.query(TaskCompletion).filter(
+        TaskCompletion.student_id == user_id
     ).all()
-    
-    result = []
-    for submission in submissions:
-        task_data = {
-            "submission_id": submission.id,
-            "task": submission.task,
-            "completed": submission.completed,
-            "completed_at": submission.completed_at,
-            "notes": submission.notes
-        }
-        result.append(task_data)
-    
-    return result
+
+    return completions
 
 @app.put("/tasks/{task_id}/complete")
 def mark_task_complete(
     task_id: int,
+    user_id: int = Form(...),  # Ahora se pasa el ID del usuario directamente
     notes: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.is_admin:
+    # Verificar que el usuario existe y no es admin
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+  
+    if user.is_admin:
         raise HTTPException(status_code=403, detail="Admins cannot complete tasks")
-    
-    submission = db.query(TaskSubmission).filter(
-        TaskSubmission.task_id == task_id,
-        TaskSubmission.student_id == current_user.id
+
+    completion = db.query(TaskCompletion).filter(
+        TaskCompletion.task_id == task_id,
+        TaskCompletion.student_id == user_id
     ).first()
-    
-    if not submission:
-        raise HTTPException(status_code=404, detail="Task assignment not found")
-    
-    submission.completed = True
-    submission.completed_at = datetime.utcnow()
+
+    if not completion:
+        raise HTTPException(status_code=404, detail="Task completion record not found")
+
+    completion.completed = True
+    completion.completed_at = datetime.utcnow()
     if notes:
-        submission.notes = notes
-    
+        completion.notes = notes
+
     db.commit()
     return {"message": "Task marked as completed"}
-@app.post("/logout")
-def logout_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """
-    Endpoint para cerrar sesión invalidando el token JWT
-    """
-    token = credentials.credentials
 
-    try:
-        # Decodificar el token para verificar que es válido antes de invalidarlo
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-
-        blacklisted_tokens.add(token)
-
-        exp_timestamp = payload.get("exp")
-        if exp_timestamp:
-             ttl = exp_timestamp - int(datetime.utcnow().timestamp())
-             if ttl > 0:
-                 redisclient.setex(f"blacklist{token}", ttl, "revoked")
-
-        return {"message": "Successfully logged out"}
-
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 @app.put("/tasks/{task_id}/uncomplete")
 def mark_task_incomplete(
     task_id: int,
-    current_user: User = Depends(get_current_user),
+    user_id: int = Form(...),  # Ahora se pasa el ID del usuario directamente
     db: Session = Depends(get_db)
 ):
-    if current_user.is_admin:
+    # Verificar que el usuario existe y no es admin
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+  
+    if user.is_admin:
         raise HTTPException(status_code=403, detail="Admins cannot uncomplete tasks")
-    
-    submission = db.query(TaskSubmission).filter(
-        TaskSubmission.task_id == task_id,
-        TaskSubmission.student_id == current_user.id
-    ).first()
-    
-    if not submission:
-        raise HTTPException(status_code=404, detail="Task assignment not found")
-    
-    submission.completed = False
-    submission.completed_at = None
-    submission.notes = None
-    
-    db.commit()
-    return {"message": "Task marked as incomplete"}
 
-# Endpoints de estadísticas (solo administradores)
+    completion = db.query(TaskCompletion).filter(
+        TaskCompletion.task_id == task_id,
+        TaskCompletion.student_id == user_id
+    ).first()
+
+    if not completion:
+        raise HTTPException(status_code=404, detail="Task completion record not found")
+
+    completion.completed = False
+    completion.completed_at = None
+    completion.notes = None
+
+    db.commit()
+    return {"message": "Task marked as not completed"}
+
+# Endpoints de estadísticas
 @app.get("/statistics/overview")
-def get_statistics_overview(
-    current_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
+def get_statistics_overview(db: Session = Depends(get_db)):
     total_tasks = db.query(Task).count()
     total_students = db.query(User).filter(User.is_admin == False).count()
-    total_submissions = db.query(TaskSubmission).count()
-    completed_submissions = db.query(TaskSubmission).filter(TaskSubmission.completed == True).count()
-    
-    overall_completion_rate = (completed_submissions / total_submissions * 100) if total_submissions > 0 else 0
-    
+    total_completions = db.query(TaskCompletion).count()
+    completed_completions = db.query(TaskCompletion).filter(TaskCompletion.completed == True).count()
+
+    overall_completion_rate = (completed_completions / total_completions * 100) if total_completions > 0 else 0
+
     return {
         "total_tasks": total_tasks,
         "total_students": total_students,
-        "total_submissions": total_submissions,
-        "completed_submissions": completed_submissions,
-        "pending_submissions": total_submissions - completed_submissions,
+        "total_assignments": total_completions,
+        "completed_assignments": completed_completions,
+        "pending_assignments": total_completions - completed_completions,
         "overall_completion_rate": round(overall_completion_rate, 2)
     }
 
 @app.get("/statistics/tasks")
-def get_task_statistics(
-    current_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
+def get_task_statistics(db: Session = Depends(get_db)):
     tasks = db.query(Task).all()
     task_stats = []
-    
+
     for task in tasks:
-        submissions = db.query(TaskSubmission).filter(TaskSubmission.task_id == task.id).all()
-        total = len(submissions)
-        completed = len([s for s in submissions if s.completed])
+        completions = db.query(TaskCompletion).filter(TaskCompletion.task_id == task.id).all()
+        total = len(completions)
+        completed = len([c for c in completions if c.completed])
         completion_rate = (completed / total * 100) if total > 0 else 0
-        
+
         task_stats.append({
             "task_id": task.id,
             "task_title": task.title,
@@ -394,23 +336,20 @@ def get_task_statistics(
             "completion_rate": round(completion_rate, 2),
             "created_at": task.created_at
         })
-    
+
     return task_stats
 
 @app.get("/statistics/students")
-def get_student_statistics(
-    current_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
+def get_student_statistics(db: Session = Depends(get_db)):
     students = db.query(User).filter(User.is_admin == False).all()
     student_stats = []
-    
+
     for student in students:
-        submissions = db.query(TaskSubmission).filter(TaskSubmission.student_id == student.id).all()
-        total = len(submissions)
-        completed = len([s for s in submissions if s.completed])
+        completions = db.query(TaskCompletion).filter(TaskCompletion.student_id == student.id).all()
+        total = len(completions)
+        completed = len([c for c in completions if c.completed])
         completion_rate = (completed / total * 100) if total > 0 else 0
-        
+
         student_stats.append({
             "student_id": student.id,
             "student_name": student.username,
@@ -420,23 +359,26 @@ def get_student_statistics(
             "pending_tasks": total - completed,
             "completion_rate": round(completion_rate, 2)
         })
-    
+
     return student_stats
 
-# Endpoint para servir imágenes
+# Montar carpeta estática para imágenes
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 @app.get("/")
 def root():
     return {
-        "message": "API del Sistema de Tareas Educativas",
+        "message": "API del Sistema de Tareas Educativas (Sin Autenticación)",
         "version": "1.0.0",
         "database": "MySQL",
         "endpoints": {
             "docs": "/docs",
             "redoc": "/redoc",
             "register": "/register",
-            "login": "/login"
+            "login": "/login",
+            "users": "/users",
+            "tasks": "/tasks",
+            "statistics": "/statistics/overview"
         }
     }
 
@@ -463,6 +405,6 @@ def create_default_admin():
     finally:
         db.close()
 
-if __name__ == "__api__":
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

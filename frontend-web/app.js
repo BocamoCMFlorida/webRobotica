@@ -4,7 +4,6 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { View, Text, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 
 import LoginScreen from './LoginScreen';
-import RegisterScreen from './RegisterScreen';
 import AdminDashboard from './AdminDashboard';
 import StudentDashboard from './StudentDashboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,26 +18,27 @@ const LoadingScreen = () => (
 );
 
 export default function App() {
-  const [token, setToken] = useState(null);
   const [role, setRole] = useState(null);
+  const [username, setUsername] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     async function loadSession() {
       try {
-        const savedToken = await AsyncStorage.getItem('access_token');
         const savedRole = await AsyncStorage.getItem('user_role');
+        const savedUsername = await AsyncStorage.getItem('username');
 
-        if (savedToken && savedRole) {
-          setToken(savedToken);
+        if (savedRole) {
           setRole(savedRole);
+          setUsername(savedUsername || 'Usuario');
           setIsAuthenticated(true);
         } else {
           setIsAuthenticated(false);
         }
       } catch (e) {
         console.error('Error al cargar sesión:', e);
+        setIsAuthenticated(false);
       } finally {
         setLoading(false);
       }
@@ -46,15 +46,17 @@ export default function App() {
     loadSession();
   }, []);
 
+  // Esta función borra sesión y resetea estados
   const handleLogout = async () => {
     try {
-      await AsyncStorage.multiRemove(['access_token', 'user_role', 'user_info']);
-      setToken(null);
+      await AsyncStorage.multiRemove(['user_role', 'username', 'user_info']);
       setRole(null);
+      setUsername(null);
       setIsAuthenticated(false);
       Alert.alert('Sesión cerrada', 'Has cerrado sesión exitosamente');
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
+      Alert.alert('Error', 'No se pudo cerrar sesión correctamente');
     }
   };
 
@@ -64,38 +66,32 @@ export default function App() {
 
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: true }}>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
-          <>
-            <Stack.Screen 
-              name="Login"
-              options={{ title: 'Iniciar Sesión' }}
-            >
-              {(props) => (
-                <LoginScreen 
-                  {...props}
-                  setToken={setToken}
-                  setRole={setRole}
-                  setIsAuthenticated={setIsAuthenticated}
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen 
-              name="Register"
-              component={RegisterScreen}
-              options={{ title: 'Registro', headerBackTitle: 'Volver' }}
-            />
-          </>
+          <Stack.Screen
+            name="Login"
+            options={{ title: 'Iniciar Sesión' }}
+          >
+            {(props) => (
+              <LoginScreen
+                {...props}
+                setRole={setRole}
+                setUsername={setUsername}
+                setIsAuthenticated={setIsAuthenticated}
+              />
+            )}
+          </Stack.Screen>
         ) : (
           <>
             {role === 'admin' ? (
               <Stack.Screen
                 name="AdminDashboard"
-                options={{ title: 'Dashboard de Admin' }}
+                options={{ title: 'Dashboard Admin' }}
               >
                 {(props) => (
                   <AdminDashboard
                     {...props}
+                    username={username}
                     onLogout={handleLogout}
                   />
                 )}
@@ -103,11 +99,12 @@ export default function App() {
             ) : (
               <Stack.Screen
                 name="StudentDashboard"
-                options={{ title: 'Dashboard de Estudiante' }}
+                options={{ title: 'Dashboard Estudiante' }}
               >
                 {(props) => (
                   <StudentDashboard
                     {...props}
+                    username={username}
                     onLogout={handleLogout}
                   />
                 )}

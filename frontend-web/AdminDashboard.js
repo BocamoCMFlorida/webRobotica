@@ -1,236 +1,179 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
-  ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
   Alert,
+  Modal,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Platform
 } from 'react-native';
 
-const API_URL = 'http://localhost:8000/tasks'; // Cambiar según configuración
+const API_URL = 'http://localhost:8000';
 
 const AdminDashboard = ({ token, username, onLogout }) => {
-  const [stats, setStats] = useState(null);
-  const [users, setUsers] = useState([]);
+  const [activeTab, setActiveTab] = useState('students');
+  const [students, setStudents] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [showNewTaskModal, setShowNewTaskModal] = useState(false);
+  const [newTask, setNewTask] = useState({
+    title: '',
+    description: '',
+    difficulty: 'Básico',
+    studentId: '',
+    pdfUrl: ''
+  });
 
   useEffect(() => {
-    fetchAdminData();
+    fetchData();
   }, []);
 
-  const fetchAdminData = async () => {
-    setLoading(true);
-    setError(null);
+  const fetchData = async () => {
     try {
-      console.log('Fetching admin stats...');
-      const statsRes = await fetch(`${API_URL}/admin/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const statsResponse = await fetch(`${API_URL}/statistics/overview`, {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-      console.log('Stats response:', statsRes.status);
-      const statsData = await statsRes.json();
-      console.log('Stats data:', statsData);
+      const statsData = await statsResponse.json();
+      setStats(statsData);
 
-      const usersRes = await fetch(`${API_URL}/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const studentsResponse = await fetch(`${API_URL}/statistics/students`, {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-      console.log('Users response:', usersRes.status);
-      const usersData = await usersRes.json();
-      console.log('Users data:', usersData);
+      const studentsData = await studentsResponse.json();
+      setStudents(studentsData);
 
-      if (statsRes.ok && usersRes.ok) {
-        setStats(statsData);
-        setUsers(usersData);
-      } else {
-        setError('No se pudieron cargar los datos administrativos');
-      }
-    } catch (e) {
-      console.error(e);
-      setError('Error de conexión con el servidor');
+      const tasksResponse = await fetch(`${API_URL}/statistics/tasks`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const tasksData = await tasksResponse.json();
+      setTasks(tasksData);
+    } catch (error) {
+      Alert.alert('Error', 'No se pudieron cargar los datos');
     } finally {
       setLoading(false);
     }
   };
 
-  console.log('Render AdminDashboard', { loading, error, stats, users });
-
-  if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#7c3aed" />
-        <Text style={styles.infoText}>Cargando datos administrativos...</Text>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.centerContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={fetchAdminData}>
-          <Text style={styles.retryButtonText}>Reintentar</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-          <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const createTask = async () => {
+    if (!newTask.title || !newTask.description) {
+      Alert.alert('Error', 'Por favor completa todos los campos');
+      return;
+    }
+    setShowNewTaskModal(false);
+    setNewTask({ title: '', description: '', difficulty: 'Básico', studentId: '', pdfUrl: '' });
+    fetchData();
+  };
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>👑 Panel Administrativo</Text>
-        <Text style={styles.welcomeText}>Bienvenido, {username}</Text>
-        <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-          <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
+      <View style={styles.adminHeader}>
+        <Text style={styles.adminTitle}>👤 Panel de Administración</Text>
+        <TouchableOpacity
+          style={styles.logoutButton}
+          onPress={() => {
+            // Borrar sesión del storage y actualizar autenticación global
+            if (typeof onLogout === 'function') {
+              onLogout();
+            }
+          }}
+        >
+          <Text style={styles.logoutButtonText}>🚪 Cerrar Sesión</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.statsContainer}>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Total de Usuarios</Text>
-          <Text style={styles.statValue}>{stats.total_users}</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Tareas Totales</Text>
-          <Text style={styles.statValue}>{stats.total_tasks}</Text>
-        </View>
-
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Tareas Completadas</Text>
-          <Text style={styles.statValue}>{stats.completed_tasks}</Text>
-        </View>
+      <View style={styles.adminStats}>
+        <View style={styles.adminStatCard}><Text style={styles.adminStatLabel}>Total Estudiantes</Text><Text style={styles.adminStatValue}>{stats.total_students || 0}</Text></View>
+        <View style={styles.adminStatCard}><Text style={styles.adminStatLabel}>Tareas Creadas</Text><Text style={styles.adminStatValue}>{stats.total_tasks || 0}</Text></View>
+        <View style={styles.adminStatCard}><Text style={styles.adminStatLabel}>Tasa de Finalización</Text><Text style={[styles.adminStatValue, { color: '#10b981' }]}>{stats.overall_completion_rate || 0}%</Text></View>
       </View>
 
-      <View style={styles.usersList}>
-        <Text style={styles.sectionTitle}>Usuarios Registrados</Text>
-        {users.length === 0 ? (
-          <Text style={styles.infoText}>No hay usuarios para mostrar</Text>
-        ) : (
-          users.map((user) => (
-            <View key={user.id} style={styles.userCard}>
-              <Text style={styles.userName}>{user.username}</Text>
-              <Text style={styles.userEmail}>{user.email}</Text>
+      <View style={styles.tabs}>
+        <TouchableOpacity style={[styles.tab, activeTab === 'students' && styles.activeTab]} onPress={() => setActiveTab('students')}>
+          <Text style={[styles.tabText, activeTab === 'students' && styles.activeTabText]}>👥 Estudiantes</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tab, activeTab === 'tasks' && styles.activeTab]} onPress={() => setActiveTab('tasks')}>
+          <Text style={[styles.tabText, activeTab === 'tasks' && styles.activeTabText]}>📋 Gestión de Tareas</Text>
+        </TouchableOpacity>
+      </View>
+
+      {activeTab === 'students' ? (
+        <View style={styles.studentsSection}>
+          {students.map(student => (
+            <View key={student.student_id} style={styles.studentCard}>
+              <Text style={styles.studentName}>{student.student_name}</Text>
+              <Text style={styles.studentEmail}>{student.student_email}</Text>
+              <View style={styles.progressBar}><View style={[styles.progressFill, { width: `${student.completion_rate}%` }]} /></View>
+              <Text style={styles.progressText}>{student.completed_tasks}/{student.total_tasks} completadas</Text>
             </View>
-          ))
-        )}
-      </View>
+          ))}
+        </View>
+      ) : (
+        <View style={styles.tasksSection}>
+          {tasks.map(task => (
+            <View key={task.task_id} style={styles.adminTaskCard}>
+              <Text style={styles.taskTitle}>{task.task_title}</Text>
+              <Text style={styles.taskDate}>Creado: {new Date(task.created_at).toLocaleDateString()}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <Modal visible={showNewTaskModal} animationType="slide" transparent={true} onRequestClose={() => setShowNewTaskModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Nueva Tarea</Text>
+            <TextInput style={styles.input} placeholder="Nombre de la Tarea" value={newTask.title} onChangeText={text => setNewTask({ ...newTask, title: text })} />
+            <TextInput style={[styles.input, styles.textArea]} placeholder="Descripción" value={newTask.description} onChangeText={text => setNewTask({ ...newTask, description: text })} multiline numberOfLines={4} />
+            <TouchableOpacity style={styles.createButton} onPress={createTask}><Text style={styles.createButtonText}>📋 Crear</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={() => setShowNewTaskModal(false)}><Text style={styles.cancelButtonText}>Cancelar</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: '#fff',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
-  },
-  header: {
-    marginBottom: 20,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#7c3aed',
-    marginBottom: 4,
-  },
-  welcomeText: {
-    fontSize: 18,
-    color: '#333',
-    marginBottom: 12,
-  },
-  logoutButton: {
-    backgroundColor: '#ef4444',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-  },
-  logoutButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-  statCard: {
-    flex: 1,
-    marginHorizontal: 4,
-    backgroundColor: '#f3e8ff',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-  },
-  statLabel: {
-    fontSize: 16,
-    color: '#7c3aed',
-    marginBottom: 8,
-  },
-  statValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#4c1d95',
-  },
-  usersList: {
-    marginTop: 10,
-  },
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#7c3aed',
-  },
-  userCard: {
-    backgroundColor: '#ede9fe',
-    padding: 12,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#312e81',
-  },
-  userEmail: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  errorText: {
-    color: '#b91c1c',
-    fontSize: 18,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  infoText: {
-    fontSize: 16,
-    color: '#6b7280',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  retryButton: {
-    backgroundColor: '#7c3aed',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 6,
-    marginTop: 10,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
+  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  adminHeader: { backgroundColor: 'white', padding: 20, paddingTop: Platform.OS === 'ios' ? 50 : 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 5 },
+  adminTitle: { fontSize: 24, fontWeight: 'bold' },
+  newTaskButton: { backgroundColor: '#7c3aed', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 6 },
+  newTaskButtonText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
+  adminStats: { flexDirection: 'row', padding: 20, gap: 10 },
+  adminStatCard: { flex: 1, backgroundColor: 'white', padding: 15, borderRadius: 10, alignItems: 'center', elevation: 3 },
+  adminStatLabel: { fontSize: 12, color: '#6b7280', marginBottom: 5 },
+  adminStatValue: { fontSize: 24, fontWeight: 'bold', color: '#7c3aed' },
+  tabs: { flexDirection: 'row', backgroundColor: 'white', marginHorizontal: 20, borderRadius: 10, padding: 5 },
+  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
+  activeTab: { backgroundColor: '#ede9fe' },
+  tabText: { fontSize: 14, color: '#6b7280' },
+  activeTabText: { color: '#7c3aed', fontWeight: 'bold' },
+  studentsSection: { padding: 20 },
+  studentCard: { backgroundColor: 'white', padding: 15, borderRadius: 10, marginBottom: 10, elevation: 3 },
+  studentName: { fontSize: 16, fontWeight: 'bold' },
+  studentEmail: { fontSize: 14, color: '#6b7280' },
+  progressBar: { height: 8, backgroundColor: '#e5e7eb', borderRadius: 4, overflow: 'hidden', marginTop: 10 },
+  progressFill: { height: '100%', backgroundColor: '#7c3aed' },
+  progressText: { fontSize: 12, color: '#6b7280', marginTop: 5, textAlign: 'right' },
+  tasksSection: { padding: 20 },
+  adminTaskCard: { backgroundColor: 'white', padding: 15, borderRadius: 10, marginBottom: 10, elevation: 3 },
+  taskTitle: { fontSize: 16, fontWeight: 'bold' },
+  taskDate: { fontSize: 12, color: '#9ca3af' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: 'white', borderRadius: 10, padding: 20, width: '90%', maxWidth: 500 },
+  modalTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 15 },
+  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 12, marginBottom: 15, fontSize: 16 },
+  textArea: { height: 100, textAlignVertical: 'top' },
+  createButton: { backgroundColor: '#7c3aed', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 10 },
+  createButtonText: { color: 'white', fontWeight: 'bold' },
+  cancelButton: { backgroundColor: '#e5e7eb', padding: 15, borderRadius: 8, alignItems: 'center' },
+  cancelButtonText: { color: '#6b7280' },
+  logoutButton: { backgroundColor: '#e3342f', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 6 },
+  logoutButtonText: { color: 'white', fontSize: 14, fontWeight: 'bold' }
 });
 
 export default AdminDashboard;

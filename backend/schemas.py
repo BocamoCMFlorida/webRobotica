@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import List, Optional
 
-# Esquemas de Usuario
+# Usuario
 class UserCreate(BaseModel):
     email: EmailStr
     username: str
@@ -17,9 +17,9 @@ class UserResponse(BaseModel):
     created_at: datetime
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
-# Esquemas de Tarea
+# Tarea
 class TaskCreate(BaseModel):
     title: str
     description: str
@@ -35,21 +35,20 @@ class TaskResponse(BaseModel):
     creator: UserResponse
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
-# Esquemas de Envío de Tarea
-class TaskSubmissionResponse(BaseModel):
+# Completaciones (task_completions)
+class TaskCompletionResponse(BaseModel):
     id: int
     task_id: int
-    student: UserResponse
-    completed: bool
+    user: UserResponse        # Cambiado de 'student' a 'user' para coincidir con el modelo SQLAlchemy
     completed_at: Optional[datetime]
     notes: Optional[str]
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
-class TaskWithSubmissions(BaseModel):
+class TaskWithCompletions(BaseModel):
     id: int
     title: str
     description: str
@@ -60,12 +59,12 @@ class TaskWithSubmissions(BaseModel):
     completed_count: int
     pending_count: int
     completion_rate: float
-    submissions: List[TaskSubmissionResponse]
+    completions: List[TaskCompletionResponse]
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
-# Esquemas de Autenticación
+# Autenticación
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -73,19 +72,19 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
-# Esquemas de Estadísticas
+# Estadísticas
 class OverviewStats(BaseModel):
     total_tasks: int
     total_students: int
-    total_submissions: int
-    completed_submissions: int
-    pending_submissions: int
+    total_completions: int
+    completed_completions: int
+    pending_completions: int
     overall_completion_rate: float
 
 class TaskStats(BaseModel):
     task_id: int
     task_title: str
-    total_assignments: int
+    total_completions: int
     completed: int
     pending: int
     completion_rate: float
@@ -102,8 +101,10 @@ class StudentStats(BaseModel):
 
 # Esquema para tareas del estudiante
 class MyTaskResponse(BaseModel):
-    submission_id: int
+    completion_id: int
     task: TaskResponse
-    completed: bool
     completed_at: Optional[datetime]
     notes: Optional[str]
+
+    class Config:
+        orm_mode = True
